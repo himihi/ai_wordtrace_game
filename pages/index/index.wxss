@@ -1,0 +1,127 @@
+.page {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 140rpx 60rpx 60rpx;
+  box-sizing: border-box;
+}
+
+/* ========== 漂浮装饰 ========== */
+.deco {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.deco-emoji {
+  position: absolute;
+  font-size: 56rpx;
+  opacity: 0.4;
+  animation: float-y 4s ease-in-out infinite;
+}
+.d0 { left: 10%; top: 12%; animation-delay: 0s; }
+.d1 { right: 12%; top: 18%; animation-delay: 0.6s; font-size: 48rpx; }
+.d2 { left: 16%; top: 42%; animation-delay: 1.2s; font-size: 44rpx; }
+.d3 { right: 14%; top: 48%; animation-delay: 1.8s; }
+.d4 { left: 24%; bottom: 18%; animation-delay: 0.9s; font-size: 46rpx; }
+.d5 { right: 22%; bottom: 14%; animation-delay: 1.5s; font-size: 42rpx; }
+
+/* ========== 音乐开关 ========== */
+.music-btn {
+  position: absolute;
+  top: 48rpx;
+  right: 40rpx;
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: transform 0.08s ease;
+}
+.music-btn:active {
+  transform: scale(0.9);
+}
+.music-btn-emoji {
+  font-size: 40rpx;
+  line-height: 1;
+}
+
+/* ========== 品牌区 ========== */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 100rpx;
+}
+.logo-bubble {
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 40rpx;
+  background: linear-gradient(135deg, #ffa25e 0%, var(--brand) 60%, var(--brand-deep) 100%);
+  box-shadow: var(--shadow-btn), 0 16rpx 40rpx rgba(255, 138, 61, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 32rpx;
+  transform: rotate(-6deg);
+}
+.logo-emoji {
+  font-size: 76rpx;
+  line-height: 1;
+}
+.logo {
+  font-size: 88rpx;
+  font-weight: 800;
+  letter-spacing: 12rpx;
+  color: var(--ink);
+  text-shadow: 0 4rpx 0 #fff, 0 8rpx 20rpx rgba(61, 58, 80, 0.15);
+  margin-bottom: 16rpx;
+  padding-left: 12rpx; /* 抵消末字间距 */
+}
+.slogan {
+  font-size: 26rpx;
+  letter-spacing: 6rpx;
+  color: var(--ink-light);
+}
+
+/* ========== 菜单 ========== */
+.menu {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 28rpx;
+  margin-bottom: 40rpx;
+}
+.menu-btn {
+  height: 104rpx;
+  font-size: 34rpx;
+}
+.menu-btn-icon {
+  font-size: 28rpx;
+  margin-right: 10rpx;
+}
+
+/* ========== 进度与页脚 ========== */
+.progress-hint {
+  font-size: 26rpx;
+  color: var(--brand-deep);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 10rpx 28rpx;
+  border-radius: 999rpx;
+}
+.footer {
+  position: absolute;
+  bottom: 40rpx;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 22rpx;
+  color: #c0bcd2;
+  letter-spacing: 2rpx;
+}

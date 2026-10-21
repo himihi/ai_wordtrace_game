@@ -1,0 +1,16 @@
+{
+  "name": "ai-wordtrace-game",
+  "version": "1.0.0",
+  "private": true,
+  "description": "逐字追踪 WordTrace - 成语益智微信小程序",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "miniprogram-api-typings": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.4.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "validate": "tsx scripts/validate-levels.ts"
+  }
+}

@@ -1,0 +1,119 @@
+.page {
+  min-height: 100vh;
+  padding: 28rpx 32rpx 60rpx;
+  box-sizing: border-box;
+}
+
+/* ========== 总进度 ========== */
+.summary {
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--ink-light);
+  margin-bottom: 28rpx;
+}
+.summary-num {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: var(--brand-deep);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ========== 分段 ========== */
+.section {
+  margin-bottom: 40rpx;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-bottom: 20rpx;
+}
+.section-badge {
+  background: linear-gradient(135deg, #ffa25e, var(--brand-deep));
+  color: #fff;
+  font-size: 22rpx;
+  font-weight: 700;
+  padding: 4rpx 14rpx;
+  border-radius: 10rpx;
+  letter-spacing: 1rpx;
+}
+.section-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.section-tag {
+  margin-left: auto;
+  font-size: 22rpx;
+  color: var(--ink-light);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+}
+
+/* ========== 关卡网格 ========== */
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx;
+}
+.cell {
+  width: 116rpx;
+  height: 116rpx;
+  border-radius: 28rpx;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+.cell:active {
+  transform: scale(0.92);
+}
+
+.cell-num {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 可挑战：橙色脉冲光圈 */
+.cell-current {
+  border: 4rpx solid var(--brand);
+  animation: current-pulse 1.6s ease-in-out infinite;
+}
+@keyframes current-pulse {
+  0%, 100% { box-shadow: var(--shadow-card), 0 0 0 0 rgba(255, 138, 61, 0.4); }
+  50%      { box-shadow: var(--shadow-card), 0 0 0 14rpx rgba(255, 138, 61, 0); }
+}
+
+/* 已通关：青绿底 + 对勾角标 */
+.cell-passed {
+  background: #e9fbf9;
+  border: 4rpx solid var(--success);
+}
+.cell-passed .cell-num {
+  color: #2aa79f;
+}
+.cell-check {
+  position: absolute;
+  right: 8rpx;
+  top: 4rpx;
+  font-size: 26rpx;
+  font-weight: 800;
+  color: var(--success);
+}
+
+/* 未解锁：灰态 */
+.cell-locked {
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+  border: 4rpx solid rgba(216, 211, 232, 0.6);
+}
+.cell-lock {
+  font-size: 36rpx;
+  opacity: 0.6;
+}

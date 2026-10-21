@@ -1,0 +1,42 @@
+<view class="page page-fade">
+  <!-- 音乐开关 -->
+  <view class="music-btn" bindtap="onToggleMusic">
+    <text class="music-btn-emoji">{{musicOn ? '🎵' : '🔇'}}</text>
+  </view>
+
+  <!-- 漂浮装饰层 -->
+  <view class="deco">
+    <text class="deco-emoji d0">🐉</text>
+    <text class="deco-emoji d1">🐔</text>
+    <text class="deco-emoji d2">🐢</text>
+    <text class="deco-emoji d3">🌙</text>
+    <text class="deco-emoji d4">🐰</text>
+    <text class="deco-emoji d5">🐟</text>
+  </view>
+
+  <!-- 品牌区 -->
+  <view class="brand">
+    <view class="logo-bubble">
+      <text class="logo-emoji">🧩</text>
+    </view>
+    <view class="logo">逐字追踪</view>
+    <view class="slogan">看图案 · 猜成语 · 连线路</view>
+  </view>
+
+  <!-- 菜单 -->
+  <view class="menu">
+    <view class="btn btn-primary menu-btn" bindtap="startGame">
+      <text class="menu-btn-icon">▶</text> {{savedLevel > 0 ? '继续游戏' : '开始游戏'}}
+    </view>
+    <view class="btn btn-ghost menu-btn" bindtap="openSelect">关卡选择</view>
+  </view>
+
+  <view class="progress-hint" wx:if="{{savedLevel > 0}}">
+    ⏸ 第 {{savedLevel}} 关进行中 · 已选 {{savedStep}} / 4
+  </view>
+  <view class="progress-hint" wx:elif="{{passedCount > 0}}">
+    已通关 {{passedCount}} / {{total}} 关，继续加油！
+  </view>
+
+  <view class="footer">逐字追踪 v1.0 · 益智休闲</view>
+</view>

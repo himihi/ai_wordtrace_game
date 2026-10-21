@@ -1,0 +1,30 @@
+<view class="page page-fade">
+  <view class="summary" wx:if="{{passedCount > 0}}">
+    已通关 <text class="summary-num">{{passedCount}}</text> / {{total}} 关
+  </view>
+
+  <view class="section" wx:for="{{sections}}" wx:key="key" wx:for-item="section">
+    <view class="section-header">
+      <view class="section-badge">{{section.key}}</view>
+      <view class="section-title">{{section.title}}</view>
+      <view class="section-tag">{{section.tag}}</view>
+    </view>
+    <view class="grid">
+      <view
+        wx:for="{{section.cells}}"
+        wx:key="id"
+        wx:for-item="cell"
+        class="cell cell-{{cell.state}}"
+        data-id="{{cell.id}}"
+        data-state="{{cell.state}}"
+        bindtap="onTapLevel"
+      >
+        <text wx:if="{{cell.state === 'locked'}}" class="cell-lock">🔒</text>
+        <block wx:else>
+          <text class="cell-num">{{cell.id}}</text>
+          <text wx:if="{{cell.state === 'passed'}}" class="cell-check">✓</text>
+        </block>
+      </view>
+    </view>
+  </view>
+</view>

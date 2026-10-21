@@ -1,0 +1,16 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/level-select/level-select",
+    "pages/game/game"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#FFF7E6",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "逐字追踪",
+    "backgroundColor": "#FFF7E6",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
