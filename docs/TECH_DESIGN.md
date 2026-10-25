@@ -102,7 +102,7 @@ interface Level {
   chars: [string, string, string, string];
   explanation: string;
   nodes: LevelNode[];   // 前 4 个为正确节点（顺序 === chars），其后为干扰项
-  // 提示为全局共享池（wt_hint_pool），Level 不再携带每关提示数
+  // 提示按关存储（wt_hints，每关 1 次），Level 不携带提示数
 }
 
 interface LevelNode {
@@ -132,16 +132,11 @@ L2/L3 拒绝采样分散分布，最小间距 24%、边距 12%，适配放大后
 | Key | 类型 | 说明 |
 |---|---|---|
 | `wt_progress` | `{ maxLevel: number, passed: number[] }` | 已通关关卡与最大解锁关 |
-| `wt_hint_pool` | `{ left: number, lockedUntil: number }` | **全局**提示池：剩余次数与锁定截止戳（ms） |
+| `wt_hints` | `{ [levelId]: number }` | 每关剩余提示次数（缺省 1 次） |
 | `wt_settings` | `{ music: boolean }` | 音乐开关（缺省视为开） |
 | `wt_state` | `{ [levelId]: LevelState }` | 每关未完成的对局存档 |
 
 ```ts
-interface HintPool {
-  left: number;         // 剩余提示次数（0–3），整个游戏共享，不区分关卡
-  lockedUntil: number;  // 锁定截止时间戳（ms）；<= now 表示未锁定
-}
-
 interface LevelState {
   levelId: number;
   step: number;              // 当前应选第几个字（1–3 才有恢复意义）
@@ -156,7 +151,7 @@ interface LevelState {
 ```json
 {
   "wt_progress": { "maxLevel": 12, "passed": [1, 2, "...", 11] },
-  "wt_hint_pool": { "left": 0, "lockedUntil": 1697777777777 },
+  "wt_hints": { "12": 0 },
   "wt_settings": { "music": true },
   "wt_state": { "12": { "levelId": 12, "step": 2, "slots": ["狼", "吞", "", ""],
                         "selectedNodes": ["n2", "n4"], "savedAt": 1697777777777 } }
@@ -178,9 +173,10 @@ data: {
   selectedNodes: [] as string[], // 已选节点 id 序列
   selectedMap: {},               // 已选节点快速查找表（WXML 不支持 indexOf 调用）
   lines: [] as Line[],           // 连线渲染数据（像素值）
-  hintLeft: 3,                   // 全局提示池剩余次数（0–3）
-  hintLocked: false,             // 提示池是否处于锁定冷却中
-  hintLockSec: 0,                // 锁定剩余秒数（倒计时展示）
+  hintLeft: 1,                   // 本关剩余提示次数（每关 1 次，持久化）
+  wrongCount: 0,                 // 本关已点错次数（满 3 次锁定）
+  levelLocked: false,            // 本关是否处于锁定休息中
+  lockSec: 0,                    // 锁定剩余秒数（倒计时展示）
   hintTargetId: '',              // 高亮提示节点
   showResult: false,
   shakeNodeId: '',               // 当前错误抖动的节点
@@ -190,7 +186,7 @@ data: {
 ```
 
 自定义字段（不进 data）：`areaW / areaH`（游戏区像素尺寸，SelectorQuery 测量）、
-`shakeTimer`、`hintTimer`（提示锁定倒计时 interval）、`resumeRequested`
+`shakeTimer`、`lockTimer`（关卡锁定倒计时 interval）、`resumeRequested`
 （本次进入是否消费一次对局恢复）。
 
 ### 5.2 核心流程
@@ -200,7 +196,7 @@ onLoad(id, resume) → resetLevel(id)
   ├── 基础 setData（关卡、空进度、剩余提示）
   ├── 存在未完成存档 → 二选一：
   │     ├── resume=1（首页「继续游戏」进入）→ restoreState 静默恢复
-  │     │     （回填进度/填格；提示池为全局状态不在对局存档内，
+  │     │     （回填进度/填格；提示按关存于 wt_hints 不在对局存档内，
   │     │       80ms 后测量游戏区并 rebuildLines 重建连线）
   │     └── 其他入口 → wx.showModal 让用户选择
   │           ├── 继续游戏 → restoreState
@@ -216,9 +212,11 @@ onNodeTap(node)
   │     └── step === 4 → onPass()
   └── 否则 vibrateShort(medium) + playSfx('wrong')，抖动 400ms，状态不变
 
-onHint()：全局提示池 left > 0 → 高亮下一正确节点 1.5s；
-  用掉最后一次（left 归 0）→ 锁定 10s（HINT_LOCK_MS），按钮显示 🔒 倒计时，
-  到期自动恢复 3 次；锁定中点击提示「休息中 X 秒后恢复」
+onNodeTap 点错 → wrongCount++，满 3 次（WRONG_LIMIT）→ lockLevel()：
+  本关锁定 10s（LEVEL_LOCK_MS），游戏区覆盖锁定遮罩倒计时；
+  解锁后提示机会不恢复，再错 3 次继续锁定 10s
+onHint()：本关 hintLeft > 0 → 高亮下一正确节点 1.5s 并持久化；
+  每关仅 1 次（wt_hints 按关存储）；锁定中点击提示「休息中 X 秒后恢复」
 
 onPass()
   ├── markPassed + clearLevelState（过关即清对局存档）
@@ -378,65 +376,100 @@ export function calcLine(from, to, areaWidth, areaHeight, inset = 0): Line {
 动画全部用 WXSS `@keyframes` 实现，只用 `transform / opacity`，
 避免引入动画库，控制包体与性能。
 
-### 6.4 提示（全局共享池 + 10 秒锁定冷却）
+### 6.4 提示与锁定（每关 1 次提示 + 错 3 锁 10 秒）
 
-提示不再按关卡各给 3 次，而是**整个游戏共享一个 3 次池**（`wt_hint_pool`）：
-3 次用完后按钮锁定进入 10 秒休息倒计时，到点自动恢复 3 次继续游戏。
+规则：**每关只有 1 次提示机会**（`wt_hints` 按关持久化，缺省 1）；
+**每关点错 3 次锁定本关 10 秒**（`LEVEL_LOCK_MS`），期间游戏区覆盖
+锁定遮罩、节点与提示均不可点；**解锁后提示机会不恢复**，再错 3 次继续
+锁定 10 秒。换关/重开本关时错计归零、锁定清除，提示数按存档恢复。
 
 ```ts
-const HINT_LOCK_MS = 10000;
+const LEVEL_LOCK_MS = 10000;
+const WRONG_LIMIT = 3;
 
-onHint() {
-  const { hintLocked, hintLeft, step, level } = this.data;
+onNodeTap(e) {
   if (this.data.showResult) return;
-  if (hintLocked) {
-    wx.showToast({ title: `提示休息中，${this.data.hintLockSec} 秒后恢复`, icon: 'none' });
+  if (this.data.levelLocked) {           // 锁定中点击 → toast 倒计时
+    wx.showToast({ title: `休息中，${this.data.lockSec} 秒后恢复`, icon: 'none' });
     return;
   }
-  if (hintLeft <= 0) return;
+  // ...选对逻辑不变...
+  // 点错分支：
+  const wrongCount = this.data.wrongCount + 1;
+  if (wrongCount >= WRONG_LIMIT) {
+    this.setData({ wrongCount: 0, shakeNodeId: nodeId });
+    this.lockLevel();                    // 错满 3 次 → 锁定 10s
+  } else {
+    this.setData({ wrongCount, shakeNodeId: nodeId });
+  }
+}
+
+lockLevel() {
+  this.setData({ levelLocked: true, lockSec: Math.ceil(LEVEL_LOCK_MS / 1000) });
+  const deadline = Date.now() + LEVEL_LOCK_MS;
+  this.lockTimer = setInterval(() => {   // 250ms 刷新倒计时，到期解锁
+    const remain = deadline - Date.now();
+    if (remain <= 0) {
+      this.setData({ levelLocked: false, lockSec: 0 });
+      this.clearLockTimer();
+    } else {
+      this.setData({ lockSec: Math.ceil(remain / 1000) });
+    }
+  }, 250);
+}
+
+onHint() {
+  const { levelLocked, hintLeft, step, level } = this.data;
+  if (this.data.showResult) return;
+  if (levelLocked) {
+    wx.showToast({ title: `休息中，${this.data.lockSec} 秒后恢复`, icon: 'none' });
+    return;
+  }
+  if (hintLeft <= 0) {
+    wx.showToast({ title: '本关提示已用完', icon: 'none' });
+    return;
+  }
   const target = level.nodes.find(
     n => n.isCorrect && n.char === level.chars[step]
   );
   if (!target) return;
-  const left = hintLeft - 1;
-  // 最后一次提示用完后锁定冷却，到点自动恢复 3 次
-  const pool = left <= 0
-    ? { left: 0, lockedUntil: Date.now() + HINT_LOCK_MS }
-    : { left, lockedUntil: 0 };
-  storage.setHintPool(pool);
-  this.setData({ hintLeft: left, hintTargetId: target.id });
-  if (pool.lockedUntil > 0) {
-    this.setData({ hintLocked: true, hintLockSec: Math.ceil(HINT_LOCK_MS / 1000) });
-    this.ensureHintTimer();
-  }
-  this.saveState();                        // 对局进度存档
+  this.setData({ hintLeft: hintLeft - 1, hintTargetId: target.id });
+  storage.setHints(level.id, hintLeft - 1);   // 按关持久化，解锁不恢复
   setTimeout(() => this.setData({ hintTargetId: '' }), 1500);
 }
 ```
 
-`refreshHint()`（每次 `resetLevel` 调用）读取 `wt_hint_pool`：锁定时同步
-`hintLocked / hintLockSec` 并启动 `ensureHintTimer()`（250ms interval，
-到期写回 `{ left: 3, lockedUntil: 0 }` 并解锁）；未锁定则归位 3 次并清定时器。
-`onUnload` 中统一清理 `hintTimer / shakeTimer`。
-
-WXML 按钮双态：
+WXML：锁定遮罩覆盖游戏区（遮罩本身拦截触摸，双保险），提示按钮在锁定
+或次数用尽时置灰：
 
 ```xml
-<view class="hint-btn {{hintLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
-  <text wx:if="{{hintLocked}}">🔒 休息中</text>
-  <text wx:else>💡 提示</text>
-  <text class="hint-count">{{hintLocked ? hintLockSec : hintLeft}}</text>
+<view class="game-area">
+  <!-- 节点与连线 ... -->
+  <view class="lock-mask" wx:if="{{levelLocked}}">
+    <view class="lock-card">
+      <text class="lock-emoji">🔒</text>
+      <text class="lock-text">休息中 {{lockSec}} 秒</text>
+      <text class="lock-sub">解锁后提示机会不会恢复哦</text>
+    </view>
+  </view>
+</view>
+
+<view class="hint-btn {{levelLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
+  <text>💡 提示</text>
+  <text class="hint-count">{{hintLeft}}</text>
 </view>
 ```
+
+`onUnload` 中统一清理 `lockTimer / shakeTimer`。
 
 ### 6.5 进度与存档存储
 
 ```ts
 // utils/storage.ts
-const KEY_PROGRESS   = 'wt_progress';
-const KEY_HINT_POOL  = 'wt_hint_pool';   // 全局提示池（整个游戏共享）
-const KEY_SETTINGS   = 'wt_settings';
-const KEY_STATE      = 'wt_state';
+const KEY_PROGRESS = 'wt_progress';
+const KEY_HINTS    = 'wt_hints';       // 每关剩余提示次数（缺省 1）
+const KEY_SETTINGS = 'wt_settings';
+const KEY_STATE    = 'wt_state';
 
 export function getProgress(): Progress { /* 兼容缺省 { maxLevel: 1, passed: [] } */ }
 
@@ -449,8 +482,8 @@ export function markPassed(levelId, totalLevels): Progress {
   return p;
 }
 
-export function getHintPool(): HintPool { /* 缺省 { left: 3, lockedUntil: 0 } */ }
-export function setHintPool(pool: HintPool): void {}
+export function getHints(levelId) { /* 缺省 1 */ }
+export function setHints(levelId, n) { /* 按关持久化 */ }
 
 export function getMusicOn(): boolean    { /* 缺省 true */ }
 export function setMusicOn(on: boolean) {}

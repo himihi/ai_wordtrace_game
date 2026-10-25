@@ -8,8 +8,10 @@ import * as storage from '../../utils/storage';
 import { calcLine } from '../../utils/geometry';
 import { playBgm, playSfx, toggleMusic } from '../../utils/audio';
 
-/** 提示池用完后锁定时长（ms），到点自动恢复 3 次 */
-const HINT_LOCK_MS = 10000;
+/** 每关点错 3 次后锁定本关的时长（ms），解锁后提示机会不恢复 */
+const LEVEL_LOCK_MS = 10000;
+/** 触发锁定所需的错误次数 */
+const WRONG_LIMIT = 3;
 
 Page({
   data: {
@@ -24,12 +26,14 @@ Page({
     selectedMap: {} as Record<string, boolean>,
     /** 连线渲染数据 */
     lines: [] as Line[],
-    /** 全局提示池剩余次数（0–3） */
-    hintLeft: 3,
-    /** 提示池是否处于锁定冷却中 */
-    hintLocked: false,
+    /** 本关剩余提示次数（每关 1 次，用掉不随解锁恢复） */
+    hintLeft: 1,
+    /** 本关已点错次数（满 3 次锁定） */
+    wrongCount: 0,
+    /** 本关是否处于锁定休息中 */
+    levelLocked: false,
     /** 锁定剩余秒数（倒计时展示） */
-    hintLockSec: 0,
+    lockSec: 0,
     hintTargetId: '',
     showResult: false,
     shakeNodeId: '',
@@ -43,8 +47,8 @@ Page({
   /** 节点圆半径（px），连线端点缩进量；游戏区宽对应 686rpx（750 - 32×2 边距） */
   nodeRadius: 66,
   shakeTimer: null as ReturnType<typeof setTimeout> | null,
-  /** 提示锁定倒计时定时器 */
-  hintTimer: null as ReturnType<typeof setInterval> | null,
+  /** 关卡锁定倒计时定时器 */
+  lockTimer: null as ReturnType<typeof setInterval> | null,
   /** 本次进入是否请求恢复未完成的对局（仅消费一次） */
   resumeRequested: false,
 
@@ -64,7 +68,7 @@ Page({
   },
 
   onUnload(): void {
-    this.clearHintTimer();
+    this.clearLockTimer();
     if (this.shakeTimer) {
       clearTimeout(this.shakeTimer);
       this.shakeTimer = null;
@@ -99,12 +103,16 @@ Page({
       selectedNodes: [],
       selectedMap: {},
       lines: [],
+      hintLeft: storage.getHints(level.id),
+      wrongCount: 0,
+      levelLocked: false,
+      lockSec: 0,
       hintTargetId: '',
       showResult: false,
       shakeNodeId: '',
       isLastLevel: level.id >= TOTAL_LEVELS
     });
-    this.refreshHint();
+    this.clearLockTimer();
 
     // 未完成对局：首页「继续游戏」进入 → 静默恢复；
     // 其他入口 → 弹窗让用户选择「继续游戏 / 重新开始」
@@ -183,6 +191,10 @@ Page({
 
   onNodeTap(e: WechatMiniprogram.TouchEvent): void {
     if (this.data.showResult) return;
+    if (this.data.levelLocked) {
+      wx.showToast({ title: `休息中，${this.data.lockSec} 秒后恢复`, icon: 'none' });
+      return;
+    }
     const level = this.data.level as Level;
     const nodeId = e.currentTarget.dataset.id as string;
     const { step, selectedNodes } = this.data;
@@ -214,87 +226,62 @@ Page({
         }
       );
     } else {
-      // ===== 点错：抖动变红，不改变进度 =====
+      // ===== 点错：抖动变红，累计错 3 次锁定本关 10 秒 =====
       wx.vibrateShort({ type: 'medium' });
       playSfx('wrong');
-      this.setData({ shakeNodeId: nodeId });
+      const wrongCount = this.data.wrongCount + 1;
+      if (wrongCount >= WRONG_LIMIT) {
+        this.setData({ wrongCount: 0, shakeNodeId: nodeId });
+        this.lockLevel();
+      } else {
+        this.setData({ wrongCount, shakeNodeId: nodeId });
+      }
       if (this.shakeTimer) clearTimeout(this.shakeTimer);
       this.shakeTimer = setTimeout(() => this.setData({ shakeNodeId: '' }), 400);
     }
   },
 
-  /** 读取全局提示池并同步页面状态；锁定时启动倒计时，到期自动恢复 3 次 */
-  refreshHint(): void {
-    const pool = storage.getHintPool();
-    const now = Date.now();
-    if (pool.lockedUntil > now) {
-      this.setData({
-        hintLeft: pool.left,
-        hintLocked: true,
-        hintLockSec: Math.ceil((pool.lockedUntil - now) / 1000)
-      });
-      this.ensureHintTimer();
-    } else {
-      if (pool.left !== 3 || pool.lockedUntil !== 0) {
-        // 冷却已结束但未归位：归位并落盘
-        storage.setHintPool({ left: 3, lockedUntil: 0 });
-      }
-      this.setData({ hintLeft: 3, hintLocked: false, hintLockSec: 0 });
-      this.clearHintTimer();
-    }
-  },
-
-  /** 确保锁定倒计时定时器在跑（250ms 刷一次，到期恢复） */
-  ensureHintTimer(): void {
-    if (this.hintTimer) return;
-    this.hintTimer = setInterval(() => {
-      const pool = storage.getHintPool();
-      const remain = pool.lockedUntil - Date.now();
+  /** 点错满 3 次：锁定本关 10 秒，期间不可点节点/用提示，解锁后提示机会不恢复 */
+  lockLevel(): void {
+    this.setData({ levelLocked: true, lockSec: Math.ceil(LEVEL_LOCK_MS / 1000) });
+    this.clearLockTimer();
+    const deadline = Date.now() + LEVEL_LOCK_MS;
+    this.lockTimer = setInterval(() => {
+      const remain = deadline - Date.now();
       if (remain <= 0) {
-        storage.setHintPool({ left: 3, lockedUntil: 0 });
-        this.setData({ hintLeft: 3, hintLocked: false, hintLockSec: 0 });
-        this.clearHintTimer();
+        this.setData({ levelLocked: false, lockSec: 0 });
+        this.clearLockTimer();
       } else {
-        this.setData({ hintLockSec: Math.ceil(remain / 1000) });
+        this.setData({ lockSec: Math.ceil(remain / 1000) });
       }
     }, 250);
   },
 
-  clearHintTimer(): void {
-    if (this.hintTimer) {
-      clearInterval(this.hintTimer);
-      this.hintTimer = null;
+  clearLockTimer(): void {
+    if (this.lockTimer) {
+      clearInterval(this.lockTimer);
+      this.lockTimer = null;
     }
   },
 
   onHint(): void {
     const level = this.data.level as Level;
-    const { hintLocked, hintLeft, step } = this.data;
+    const { levelLocked, hintLeft, step } = this.data;
     if (this.data.showResult) return;
-    if (hintLocked) {
-      wx.showToast({
-        title: `提示休息中，${this.data.hintLockSec} 秒后恢复`,
-        icon: 'none'
-      });
+    if (levelLocked) {
+      wx.showToast({ title: `休息中，${this.data.lockSec} 秒后恢复`, icon: 'none' });
       return;
     }
-    if (hintLeft <= 0) return;
+    if (hintLeft <= 0) {
+      wx.showToast({ title: '本关提示已用完', icon: 'none' });
+      return;
+    }
     const target = level.nodes.find(
       (n) => n.isCorrect && n.char === level.chars[step]
     );
     if (!target) return;
-    const left = hintLeft - 1;
-    // 最后一次提示用完后锁定冷却，到点自动恢复 3 次
-    const pool = left <= 0
-      ? { left: 0, lockedUntil: Date.now() + HINT_LOCK_MS }
-      : { left, lockedUntil: 0 };
-    storage.setHintPool(pool);
-    this.setData({ hintLeft: left, hintTargetId: target.id });
-    if (pool.lockedUntil > 0) {
-      this.setData({ hintLocked: true, hintLockSec: Math.ceil(HINT_LOCK_MS / 1000) });
-      this.ensureHintTimer();
-    }
-    this.saveState();
+    this.setData({ hintLeft: hintLeft - 1, hintTargetId: target.id });
+    storage.setHints(level.id, hintLeft - 1);
     setTimeout(() => this.setData({ hintTargetId: '' }), 1500);
   },
 

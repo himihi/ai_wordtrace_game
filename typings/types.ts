@@ -54,10 +54,5 @@ export interface LevelState {
   savedAt: number;
 }
 
-/** 全局提示池：整个游戏共享 3 次提示，用完后锁定冷却 10 秒自动恢复 */
-export interface HintPool {
-  /** 剩余提示次数（0–3） */
-  left: number;
-  /** 锁定截止时间戳（ms）；<= now 表示未锁定 */
-  lockedUntil: number;
-}
+/** 每关提示次数：wt_hints = { [levelId]: number }，缺省 1 次 */
+

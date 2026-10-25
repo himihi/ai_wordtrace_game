@@ -12,10 +12,9 @@
       <view class="icon-btn" bindtap="onRestart">
         <text class="icon-btn-emoji">🔄</text>
       </view>
-      <view class="hint-btn {{hintLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
-        <text wx:if="{{hintLocked}}">🔒 休息中</text>
-        <text wx:else>💡 提示</text>
-        <text class="hint-count">{{hintLocked ? hintLockSec : hintLeft}}</text>
+      <view class="hint-btn {{levelLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
+        <text>💡 提示</text>
+        <text class="hint-count">{{hintLeft}}</text>
       </view>
     </view>
   </view>
@@ -51,6 +50,14 @@
         <view class="node-core {{selectedMap[item.id] ? 'node-selected' : ''}} {{shakeNodeId === item.id ? 'node-shake' : ''}} {{hintTargetId === item.id ? 'node-hint' : ''}}">
           <text class="node-emoji {{item.glyphs > 2 ? 'node-emoji-xwide' : item.glyphs > 1 ? 'node-emoji-wide' : ''}}">{{item.emoji}}</text>
         </view>
+      </view>
+    </view>
+    <!-- 锁定遮罩：点错 3 次后覆盖游戏区，休息 10 秒 -->
+    <view class="lock-mask" wx:if="{{levelLocked}}">
+      <view class="lock-card">
+        <text class="lock-emoji">🔒</text>
+        <text class="lock-text">休息中 {{lockSec}} 秒</text>
+        <text class="lock-sub">解锁后提示机会不会恢复哦</text>
       </view>
     </view>
   </view>

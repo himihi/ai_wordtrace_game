@@ -205,6 +205,31 @@
   50%      { box-shadow: 0 0 0 22rpx rgba(255, 138, 61, 0); }
 }
 
+/* ========== 锁定遮罩 ========== */
+.lock-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 251, 243, 0.82);
+  border-radius: 24rpx;
+}
+.lock-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+  padding: 40rpx 56rpx;
+  background: #fff;
+  border-radius: 24rpx;
+  box-shadow: 0 8rpx 32rpx rgba(46, 41, 78, 0.12);
+}
+.lock-emoji { font-size: 72rpx; }
+.lock-text { font-size: 32rpx; font-weight: 600; color: var(--ink); }
+.lock-sub { font-size: 22rpx; color: var(--ink-light); }
+
 /* ========== 底部 ========== */
 .tips {
   margin-top: 32rpx;
