@@ -2,7 +2,7 @@
   "description": "逐字追踪 WordTrace - 成语益智小程序",
   "compileType": "miniprogram",
   "libVersion": "2.20.0",
-  "appid": "wxbf15c540930c22e1",
+  "appid": "wx8ce6e760eff7b64b",
   "projectname": "ai_wordtrace_game",
   "setting": {
     "es6": true,
@@ -20,7 +20,9 @@
     "minifyWXML": true,
     "localPlugins": false,
     "disableUseStrict": false,
-    "useCompilerPlugins": ["typescript"],
+    "useCompilerPlugins": [
+      "typescript"
+    ],
     "condition": false,
     "swc": false,
     "disableSWC": true,

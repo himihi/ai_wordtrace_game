@@ -8,11 +8,20 @@ export type SfxName = 'correct' | 'wrong' | 'win';
 
 let bgm: WechatMiniprogram.InnerAudioContext | null = null;
 const sfx: Partial<Record<SfxName, WechatMiniprogram.InnerAudioContext>> = {};
+let audioOptionSet = false;
+
+/** iOS 静音开关下仍播放游戏声音（益智游戏惯例，全局设置一次） */
+function ensureAudioOption(): void {
+  if (audioOptionSet) return;
+  audioOptionSet = true;
+  wx.setInnerAudioOption({ obeyMuteSwitch: false });
+}
 
 function ensureBgm(): WechatMiniprogram.InnerAudioContext {
+  ensureAudioOption();
   if (!bgm) {
     bgm = wx.createInnerAudioContext();
-    bgm.src = '/assets/audio/bgm.wav';
+    bgm.src = '/assets/audio/bgm.mp3';
     bgm.loop = true;
     bgm.volume = 0.45;
   }
@@ -41,6 +50,7 @@ export function toggleMusic(): boolean {
 /** 播放短音效（正确 / 错误 / 过关） */
 export function playSfx(name: SfxName): void {
   if (!getMusicOn()) return;
+  ensureAudioOption();
   let ctx = sfx[name];
   if (!ctx) {
     ctx = wx.createInnerAudioContext();

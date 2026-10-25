@@ -8,7 +8,7 @@
  *  3. 每关恰好 4 个正确节点且顺序 === chars
  *  4. 节点数量符合阶段设定（L1=4 / L2=5 / L3=6）
  *  5. 任意两节点间距 ≥ 14%，边界留白 ≥ 8%
- *  6. hints === 3
+ *  （提示为全局共享池，不再按关卡校验）
  */
 import levels, { TOTAL_LEVELS } from '../data/levels';
 import { dist } from '../utils/geometry';
@@ -74,9 +74,6 @@ for (const lv of levels) {
       fail(`${tag}: 节点 ${n.id} 超出安全边界 (${n.x}, ${n.y})`);
     }
   }
-
-  // 规则 6
-  if (lv.hints !== 3) fail(`${tag}: hints = ${lv.hints}（应为 3）`);
 
   if (errors === errsBefore) {
     console.log(`  ✓ ${tag} 节点数 ${lv.nodes.length}`);

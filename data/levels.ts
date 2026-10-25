@@ -28,15 +28,15 @@ const SPECS: LevelSpec[] = [
     id: 1,
     idiom: '鹤立鸡群',
     explanation: '像鹤站在鸡群中一样，比喻一个人的仪表或才能在周围一群人里显得很突出。',
-    correct: ['🦢', '🧍', '🐔', '👥'],
+    correct: ['🦩', '🧍', '🐔', '🐔🐔🐔'],
     distractors: []
   },
   {
     id: 2,
     idiom: '亡羊补牢',
     explanation: '羊丢了再去修补羊圈，比喻出了问题以后及时补救，还不算太晚。',
-    // 亡=羊跑了（丢失）/ 羊 / 补=敲打修补 / 牢=围栏
-    correct: ['💨🐑', '🐑', '🔨', '🚧'],
+    // 亡=羊没了（🚫🐑 禁止/消失）/ 羊 / 补=敲打修补 / 牢=围栏
+    correct: ['🚫🐑', '🐑', '🔨', '🚧'],
     distractors: []
   },
   {
@@ -289,7 +289,7 @@ function buildLevel(spec: LevelSpec): Level {
   const nodes: Level['nodes'] = spec.correct.map((emoji, i) => ({
     id: `n${i + 1}`,
     emoji,
-    wide: glyphCount(emoji) > 1,
+    glyphs: glyphCount(emoji),
     char: chars[i],
     isCorrect: true,
     x: positions[i].x,
@@ -301,7 +301,7 @@ function buildLevel(spec: LevelSpec): Level {
     nodes.push({
       id: `n${5 + i}`,
       emoji,
-      wide: glyphCount(emoji) > 1,
+      glyphs: glyphCount(emoji),
       char: '',
       isCorrect: false,
       x: p.x,
@@ -314,8 +314,7 @@ function buildLevel(spec: LevelSpec): Level {
     idiom: spec.idiom,
     chars,
     explanation: spec.explanation,
-    nodes,
-    hints: 3
+    nodes
   };
 }
 

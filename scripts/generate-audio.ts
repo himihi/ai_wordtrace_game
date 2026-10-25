@@ -2,18 +2,38 @@
  * 音频资源生成脚本（开发期，一次性运行）
  * 运行：npx tsx scripts/generate-audio.ts
  *
- * 用轻量合成器生成全部音频资源，输出 16-bit PCM WAV 到 assets/audio/：
- *   bgm.wav     背景音乐：C 大调五声音阶明快旋律 + 低音 + 节拍点缀，8 小节无缝循环
+ * 用轻量合成器生成全部音频资源到 assets/audio/：
+ *   bgm.mp3     背景音乐：C 大调五声音阶明快旋律 + 低音 + 节拍点缀，8 小节无缝循环
+ *               （44.1kHz 渲染，lamejs 编码 96kbps MP3，体积约为 WAV 的 1/10）
  *   win.wav     过关号角：上行动机 + 终止和弦
  *   correct.wav 点对反馈：两音弹跳
  *   wrong.wav   点错反馈：低音下滑
+ * （音效文件很小，保持 WAV 免转码）
  */
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
 const SR = 22050;
+/** BGM 用 44.1kHz 渲染（lamejs 仅支持 MPEG1 采样率），音效保持 22050Hz 足够 */
+const SR_BGM = 44100;
 const ROOT = join(__dirname, '..');
 const OUT_DIR = join(ROOT, 'assets', 'audio');
+
+/** lamejs Mp3Encoder 的最小类型（npm 包无类型声明，按需手写） */
+interface Mp3Encoder {
+  encodeBuffer(buf: Int16Array): Int8Array;
+  flush(): Int8Array;
+}
+interface LameJs {
+  Mp3Encoder: new (channels: number, sampleRate: number, kbps: number) => Mp3Encoder;
+}
+
+// lame.all.js 是浏览器拼接 bundle，不做 CommonJS 导出（且 src/js 入口在 Node 下
+// 有全局变量加载顺序问题）。加载 bundle 源码并取出内部的 lamejs 工厂函数，
+// 它在执行时已把 Mp3Encoder 挂到自身静态属性上。
+const lamejs = new Function(
+  `${readFileSync(join(ROOT, 'node_modules', 'lamejs', 'lame.all.js'), 'utf8')}\nreturn lamejs;`
+)() as LameJs;
 
 /* ========== 音符频率（C 大调） ========== */
 const FREQ: Record<string, number> = {
@@ -54,18 +74,18 @@ function sampleOf(wave: Wave, f: number, t: number, harm: number): number {
   return s;
 }
 
-function synth(notes: Note[], totalSec: number, master = 0.9): Float32Array {
-  const n = Math.floor(SR * totalSec);
+function synth(notes: Note[], totalSec: number, master = 0.9, sr = SR): Float32Array {
+  const n = Math.floor(sr * totalSec);
   const out = new Float32Array(n);
   for (const note of notes) {
-    const start = Math.round(note.t * SR);
-    const len = Math.round(note.d * SR);
+    const start = Math.round(note.t * sr);
+    const len = Math.round(note.d * sr);
     const v = note.v ?? 0.3;
     const harm = note.harm ?? 0.15;
     for (let i = 0; i < len; i++) {
       const idx = start + i;
       if (idx >= n) break;
-      const t = i / SR;
+      const t = i / sr;
       out[idx] += sampleOf(note.wave ?? 'tri', FREQ[note.name ?? 'C5'], t, harm) * envelope(t, note.d) * v;
     }
   }
@@ -99,13 +119,33 @@ function writeWav(name: string, data: Float32Array): void {
   console.log(`  ✓ ${name}  (${(buf.length / 1024).toFixed(0)} KB)`);
 }
 
+/** Float32 单声道 PCM → lamejs MP3 编码 */
+function writeMp3(name: string, data: Float32Array, sr: number, kbps = 96): void {
+  const pcm = new Int16Array(data.length);
+  for (let i = 0; i < data.length; i++) {
+    pcm[i] = Math.round(Math.max(-1, Math.min(1, data[i])) * 32767);
+  }
+  const encoder = new lamejs.Mp3Encoder(1, sr, kbps);
+  const chunks: Buffer[] = [];
+  const blockSize = 1152; // MP3 帧长
+  for (let i = 0; i < pcm.length; i += blockSize) {
+    const buf = encoder.encodeBuffer(pcm.subarray(i, i + blockSize));
+    if (buf.length > 0) chunks.push(Buffer.from(buf));
+  }
+  const tail = encoder.flush();
+  if (tail.length > 0) chunks.push(Buffer.from(tail));
+  const out = Buffer.concat(chunks);
+  writeFileSync(join(OUT_DIR, name), out);
+  console.log(`  ✓ ${name}  (${(out.length / 1024).toFixed(0)} KB)`);
+}
+
 /* ========== BGM：132 BPM，8 小节（32 拍 ≈ 14.55s），末音落在 tonic 保证无缝循环 ========== */
 const BEAT = 60 / 132;
 function bt(bars: number, beats = 0): number {
   return (bars * 4 + beats) * BEAT;
 }
 
-function buildBgm(): { data: Float32Array; total: number } {
+function buildBgm(sr = SR): { data: Float32Array; total: number } {
   const total = bt(8); // 32 拍整
   const notes: Note[] = [];
 
@@ -140,7 +180,7 @@ function buildBgm(): { data: Float32Array; total: number } {
     notes.push({ name: 'C6', t: b * BEAT, d: 0.045, v: b % 4 === 0 ? 0.05 : 0.03, wave: 'square', harm: 0 });
   }
 
-  return { data: synth(notes, total), total };
+  return { data: synth(notes, total, 0.9, sr), total };
 }
 
 /* ========== 音效 ========== */
@@ -179,13 +219,24 @@ function buildWrong(): { data: Float32Array; total: number } {
 /* ========== 主流程 ========== */
 mkdirSync(OUT_DIR, { recursive: true });
 console.log(`生成音频资源到 ${OUT_DIR}`);
+
+// BGM：44.1kHz 渲染并编码为 MP3（lamejs 仅支持 MPEG1 采样率）
+writeMp3('bgm.mp3', buildBgm(SR_BGM).data, SR_BGM);
+
+// 音效文件很小，保持 WAV 免转码
 for (const [name, build] of [
-  ['bgm.wav', buildBgm],
   ['win.wav', buildWin],
   ['correct.wav', buildCorrect],
   ['wrong.wav', buildWrong]
 ] as const) {
   const { data } = build();
   writeWav(name, data);
+}
+
+// 清理旧版 WAV BGM（已被 bgm.mp3 取代，避免打进主包）
+const oldBgm = join(OUT_DIR, 'bgm.wav');
+if (existsSync(oldBgm)) {
+  rmSync(oldBgm);
+  console.log('  ✗ 已删除过时的 bgm.wav');
 }
 console.log('完成 ✔');

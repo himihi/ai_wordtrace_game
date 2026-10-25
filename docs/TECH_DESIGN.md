@@ -90,7 +90,7 @@ interface LevelSpec {
   id: number;
   idiom: string;
   explanation: string;
-  /** 与 idiom 四字一一对应的视觉节点（Emoji，可多字形如 '💨🐑'） */
+  /** 与 idiom 四字一一对应的视觉节点（Emoji，可多字形如 '🚫🐑'） */
   correct: [string, string, string, string];
   /** 干扰项 Emoji */
   distractors: string[];
@@ -102,13 +102,13 @@ interface Level {
   chars: [string, string, string, string];
   explanation: string;
   nodes: LevelNode[];   // 前 4 个为正确节点（顺序 === chars），其后为干扰项
-  hints: number;
+  // 提示为全局共享池（wt_hint_pool），Level 不再携带每关提示数
 }
 
 interface LevelNode {
   id: string;
   emoji: string;
-  wide: boolean;        // Emoji 是否占多个字形（💨🐑），节点内用较小字号渲染
+  glyphs: number;       // Emoji 占几个字形的数量（1=标准字号，2=较小，≥3=最小），由 glyphCount 统计
   char: string;         // 用于判定与填格，不渲染在节点上
   isCorrect: boolean;
   x: number;            // 百分比坐标 0–100，相对游戏区容器
@@ -132,17 +132,21 @@ L2/L3 拒绝采样分散分布，最小间距 24%、边距 12%，适配放大后
 | Key | 类型 | 说明 |
 |---|---|---|
 | `wt_progress` | `{ maxLevel: number, passed: number[] }` | 已通关关卡与最大解锁关 |
-| `wt_hints` | `{ [levelId]: number }` | 每关剩余提示次数 |
+| `wt_hint_pool` | `{ left: number, lockedUntil: number }` | **全局**提示池：剩余次数与锁定截止戳（ms） |
 | `wt_settings` | `{ music: boolean }` | 音乐开关（缺省视为开） |
 | `wt_state` | `{ [levelId]: LevelState }` | 每关未完成的对局存档 |
 
 ```ts
+interface HintPool {
+  left: number;         // 剩余提示次数（0–3），整个游戏共享，不区分关卡
+  lockedUntil: number;  // 锁定截止时间戳（ms）；<= now 表示未锁定
+}
+
 interface LevelState {
   levelId: number;
   step: number;              // 当前应选第几个字（1–3 才有恢复意义）
   slots: string[];           // 四格已填内容
   selectedNodes: string[];   // 已选节点 id 序列（顺序即连线顺序）
-  hintLeft: number;
   savedAt: number;           // 保存时间戳，首页取最近一次
 }
 ```
@@ -152,10 +156,10 @@ interface LevelState {
 ```json
 {
   "wt_progress": { "maxLevel": 12, "passed": [1, 2, "...", 11] },
-  "wt_hints": { "12": 2 },
+  "wt_hint_pool": { "left": 0, "lockedUntil": 1697777777777 },
   "wt_settings": { "music": true },
   "wt_state": { "12": { "levelId": 12, "step": 2, "slots": ["狼", "吞", "", ""],
-                        "selectedNodes": ["n2", "n4"], "hintLeft": 2, "savedAt": 1697777777777 } }
+                        "selectedNodes": ["n2", "n4"], "savedAt": 1697777777777 } }
 }
 ```
 
@@ -174,7 +178,9 @@ data: {
   selectedNodes: [] as string[], // 已选节点 id 序列
   selectedMap: {},               // 已选节点快速查找表（WXML 不支持 indexOf 调用）
   lines: [] as Line[],           // 连线渲染数据（像素值）
-  hintLeft: 3,
+  hintLeft: 3,                   // 全局提示池剩余次数（0–3）
+  hintLocked: false,             // 提示池是否处于锁定冷却中
+  hintLockSec: 0,                // 锁定剩余秒数（倒计时展示）
   hintTargetId: '',              // 高亮提示节点
   showResult: false,
   shakeNodeId: '',               // 当前错误抖动的节点
@@ -184,7 +190,8 @@ data: {
 ```
 
 自定义字段（不进 data）：`areaW / areaH`（游戏区像素尺寸，SelectorQuery 测量）、
-`shakeTimer`、`resumeRequested`（本次进入是否消费一次对局恢复）。
+`shakeTimer`、`hintTimer`（提示锁定倒计时 interval）、`resumeRequested`
+（本次进入是否消费一次对局恢复）。
 
 ### 5.2 核心流程
 
@@ -193,7 +200,8 @@ onLoad(id, resume) → resetLevel(id)
   ├── 基础 setData（关卡、空进度、剩余提示）
   ├── 存在未完成存档 → 二选一：
   │     ├── resume=1（首页「继续游戏」进入）→ restoreState 静默恢复
-  │     │     （回填进度/填格/提示数，80ms 后测量游戏区并 rebuildLines 重建连线）
+  │     │     （回填进度/填格；提示池为全局状态不在对局存档内，
+  │     │       80ms 后测量游戏区并 rebuildLines 重建连线）
   │     └── 其他入口 → wx.showModal 让用户选择
   │           ├── 继续游戏 → restoreState
   │           └── 重新开始 → clearLevelState，从空进度开始
@@ -208,7 +216,9 @@ onNodeTap(node)
   │     └── step === 4 → onPass()
   └── 否则 vibrateShort(medium) + playSfx('wrong')，抖动 400ms，状态不变
 
-onHint()：hintLeft > 0 → 高亮下一正确节点 1.5s，持久化剩余次数并 saveState()
+onHint()：全局提示池 left > 0 → 高亮下一正确节点 1.5s；
+  用掉最后一次（left 归 0）→ 锁定 10s（HINT_LOCK_MS），按钮显示 🔒 倒计时，
+  到期自动恢复 3 次；锁定中点击提示「休息中 X 秒后恢复」
 
 onPass()
   ├── markPassed + clearLevelState（过关即清对局存档）
@@ -268,7 +278,7 @@ onNodeTap(e) {
 >
   <view class="node-float" style="animation-delay: {{index * 0.35}}s;">
     <view class="node-core ...">
-      <text class="node-emoji {{item.wide ? 'node-emoji-wide' : ''}}">{{item.emoji}}</text>
+      <text class="node-emoji {{item.glyphs > 2 ? 'node-emoji-xwide' : item.glyphs > 1 ? 'node-emoji-wide' : ''}}">{{item.emoji}}</text>
     </view>
   </view>
 </view>
@@ -285,7 +295,8 @@ onNodeTap(e) {
   /* 白色圆底 + 阴影，提升辨识度与触控面积 */
 }
 .node-emoji { font-size: 88rpx; line-height: 1; }
-.node-emoji-wide { font-size: 58rpx; letter-spacing: -4rpx; } /* 双字形 Emoji 防溢出 */
+.node-emoji-wide { font-size: 58rpx; letter-spacing: -4rpx; }  /* 双字形 Emoji 防溢出 */
+.node-emoji-xwide { font-size: 44rpx; letter-spacing: -4rpx; } /* 三字形及以上（🐔🐔🐔） */
 ```
 
 三层结构（定位层 / 漂浮层 / 样式层）避免 `transform` 冲突；
@@ -367,35 +378,65 @@ export function calcLine(from, to, areaWidth, areaHeight, inset = 0): Line {
 动画全部用 WXSS `@keyframes` 实现，只用 `transform / opacity`，
 避免引入动画库，控制包体与性能。
 
-### 6.4 提示
+### 6.4 提示（全局共享池 + 10 秒锁定冷却）
+
+提示不再按关卡各给 3 次，而是**整个游戏共享一个 3 次池**（`wt_hint_pool`）：
+3 次用完后按钮锁定进入 10 秒休息倒计时，到点自动恢复 3 次继续游戏。
 
 ```ts
+const HINT_LOCK_MS = 10000;
+
 onHint() {
-  const { hintLeft, step, level } = this.data;
+  const { hintLocked, hintLeft, step, level } = this.data;
   if (this.data.showResult) return;
-  if (hintLeft <= 0) {
-    wx.showToast({ title: '提示已用完', icon: 'none' });
+  if (hintLocked) {
+    wx.showToast({ title: `提示休息中，${this.data.hintLockSec} 秒后恢复`, icon: 'none' });
     return;
   }
+  if (hintLeft <= 0) return;
   const target = level.nodes.find(
     n => n.isCorrect && n.char === level.chars[step]
   );
   if (!target) return;
-  this.setData({ hintLeft: hintLeft - 1, hintTargetId: target.id });
-  storage.setHints(level.id, hintLeft - 1);
-  this.saveState();                        // 提示数变化同步进对局存档
+  const left = hintLeft - 1;
+  // 最后一次提示用完后锁定冷却，到点自动恢复 3 次
+  const pool = left <= 0
+    ? { left: 0, lockedUntil: Date.now() + HINT_LOCK_MS }
+    : { left, lockedUntil: 0 };
+  storage.setHintPool(pool);
+  this.setData({ hintLeft: left, hintTargetId: target.id });
+  if (pool.lockedUntil > 0) {
+    this.setData({ hintLocked: true, hintLockSec: Math.ceil(HINT_LOCK_MS / 1000) });
+    this.ensureHintTimer();
+  }
+  this.saveState();                        // 对局进度存档
   setTimeout(() => this.setData({ hintTargetId: '' }), 1500);
 }
+```
+
+`refreshHint()`（每次 `resetLevel` 调用）读取 `wt_hint_pool`：锁定时同步
+`hintLocked / hintLockSec` 并启动 `ensureHintTimer()`（250ms interval，
+到期写回 `{ left: 3, lockedUntil: 0 }` 并解锁）；未锁定则归位 3 次并清定时器。
+`onUnload` 中统一清理 `hintTimer / shakeTimer`。
+
+WXML 按钮双态：
+
+```xml
+<view class="hint-btn {{hintLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
+  <text wx:if="{{hintLocked}}">🔒 休息中</text>
+  <text wx:else>💡 提示</text>
+  <text class="hint-count">{{hintLocked ? hintLockSec : hintLeft}}</text>
+</view>
 ```
 
 ### 6.5 进度与存档存储
 
 ```ts
 // utils/storage.ts
-const KEY_PROGRESS = 'wt_progress';
-const KEY_HINTS    = 'wt_hints';
-const KEY_SETTINGS = 'wt_settings';
-const KEY_STATE    = 'wt_state';
+const KEY_PROGRESS   = 'wt_progress';
+const KEY_HINT_POOL  = 'wt_hint_pool';   // 全局提示池（整个游戏共享）
+const KEY_SETTINGS   = 'wt_settings';
+const KEY_STATE      = 'wt_state';
 
 export function getProgress(): Progress { /* 兼容缺省 { maxLevel: 1, passed: [] } */ }
 
@@ -408,8 +449,8 @@ export function markPassed(levelId, totalLevels): Progress {
   return p;
 }
 
-export function getHints(levelId) { /* 缺省 3 */ }
-export function setHints(levelId, n) { /* 按关持久化 */ }
+export function getHintPool(): HintPool { /* 缺省 { left: 3, lockedUntil: 0 } */ }
+export function setHintPool(pool: HintPool): void {}
 
 export function getMusicOn(): boolean    { /* 缺省 true */ }
 export function setMusicOn(on: boolean) {}
@@ -430,22 +471,28 @@ export function clearLevelState(levelId: number) {}
 
 ### 6.6 音频
 
-- 资源：`assets/audio/` 下 4 个 16-bit PCM WAV（bgm 626KB / win 73KB /
-  correct 13KB / wrong 14KB），由 `scripts/generate-audio.ts` 离线合成
-  （五声音阶旋律 + 低音 + 节拍点缀，8 小节无缝循环），
+- 资源：`assets/audio/` 下 bgm.mp3（44.1kHz / 96kbps，约 171KB）+ 3 个
+  16-bit PCM WAV 音效（win 73KB / correct 13KB / wrong 14KB），由
+  `scripts/generate-audio.ts` 离线合成（五声音阶旋律 + 低音 + 节拍点缀，
+  8 小节无缝循环；BGM 经 lamejs 编码 MP3，体积约为 WAV 的 1/4），
   运行 `npx tsx scripts/generate-audio.ts` 可重新生成。
 - 播放：`utils/audio.ts` 基于 `wx.createInnerAudioContext`。
   BGM 单例 `loop = true`、`volume = 0.45`；音效各自独立实例，
   `stop()` 后 `play()` 实现重触发。
 - 时机：`App.onShow` 与首页 / 选关 / 游戏页 `onShow` 调 `playBgm()`
-  （已在播放时重复调用无副作用）；点对 / 点错 / 过关分别触发
-  correct / wrong / win 音效。
+  （已在播放时重复调用无副作用）；`App.onHide` 立即暂停 BGM；
+  `wx.onAudioInterruptionBegin / End` 处理来电、闹钟等系统打断的
+  暂停与恢复。点对 / 点错 / 过关分别触发 correct / wrong / win 音效。
+- 兼容：`wx.setInnerAudioOption({ obeyMuteSwitch: false })` 使 iOS
+  静音开关下游戏声音仍正常播放。
 - 开关：`wt_settings.music`，`toggleMusic()` 同时控制 BGM 与音效静音；
   首页右上角、游戏页顶栏均有 🎵 / 🔇 按钮。
 
 ### 6.7 Emoji 双字形适配
 
-个别字的视觉表达需要两个 Emoji 组合（如「亡」= 💨🐑 羊跑了）。
+个别字的视觉表达需要多个 Emoji 组合（如「亡」= 🚫🐑 羊没了/丢失、
+「群」= 🐔🐔🐔 一群鸡，与单只 🐔 形成「鹤立鸡群」的画面反差；
+节点按 `glyphs` 数量分三档字号防溢出）。
 `buildLevel()` 用 `glyphCount()`（剔除 VS16 / 键帽组合符后按码点 +
 ZWJ 分段统计）计算每个节点的字形数，`wide: true` 的节点在 WXML 中
 套用 `node-emoji-wide` 缩小字号，避免溢出圆底。
@@ -457,7 +504,7 @@ ZWJ 分段统计）计算每个节点的字形数，`wide: true` 的节点在 WX
 | 关注点 | 措施 |
 |---|---|
 | 首屏加载 | 关卡数据本地打包，无网络请求；首页只渲染按钮 |
-| 包体 | 无框架依赖；音频共 ~730KB WAV，远低于主包 2MB 限制 |
+| 包体 | 无框架依赖；音频共 ~270KB（BGM 为 MP3），远低于主包 2MB 限制 |
 | 页面切换 | 游戏页复用，切换关卡时调用 `resetLevel(levelId)` 而非新建页面 |
 | 动画性能 | 仅使用 transform / opacity 动画，避免触发布局重排 |
 | 连线数量 | 单关最多 3 条线，纯 view 渲染无压力 |
@@ -470,10 +517,10 @@ ZWJ 分段统计）计算每个节点的字形数，`wide: true` 的节点在 WX
 ## 8. 验证
 
 - `npm run check`：TypeScript 全量类型检查（含 scripts）。
-- `npm run validate`：30 关数据校验（数量/顺序/间距 ≥14%/边界 8–92/hints）。
+- `npm run validate`：30 关数据校验（数量/顺序/间距 ≥14%/边界 8–92）。
 - 微信开发者工具模拟器走查：首页 → 选关 → 游戏 → 结算 → 下一关。
 - 真机（iOS + Android）：冷启动、Emoji 字形差异、振动反馈、进度持久化。
-- 边界用例：连点已选节点、点错后继续、提示耗尽、通关后杀进程重进、
+- 边界用例：连点已选节点、点错后继续、提示耗尽锁定 10s、通关后杀进程重进、
   全通关 maxLevel 封顶、**对局中杀进程后从首页继续游戏**、
   **进入有存档的关卡时弹窗选择继续/重新开始**、**💾 手动存档后杀进程恢复**、
   **音乐开关跨页面与跨启动保持**、双字形 Emoji 渲染不溢出。

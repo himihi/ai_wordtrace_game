@@ -165,9 +165,14 @@
   font-size: 88rpx;
   line-height: 1;
 }
-/* 双字形 Emoji（如 💨🐑）缩字号避免溢出 */
+/* 双字形 Emoji（如 🚫🐑）缩字号避免溢出 */
 .node-emoji-wide {
   font-size: 58rpx;
+  letter-spacing: -4rpx;
+}
+/* 三字形及以上（如 🐔🐔🐔）进一步缩小 */
+.node-emoji-xwide {
+  font-size: 44rpx;
   letter-spacing: -4rpx;
 }
 .node-core.node-selected {

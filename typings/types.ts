@@ -5,8 +5,8 @@ export interface LevelNode {
   id: string;
   /** 视觉资源。MVP 用 Emoji，后续可替换为图标字体/图片路径 */
   emoji: string;
-  /** Emoji 是否占多个字形（如 💨🐑），节点内用较小字号渲染 */
-  wide: boolean;
+  /** Emoji 占几个字形的数量（1=标准字号，2=较小，≥3=最小），由 glyphCount 统计 */
+  glyphs: number;
   /** 对应汉字，仅用于判定与填格，不渲染在节点上 */
   char: string;
   /** 是否属于目标成语 */
@@ -23,7 +23,6 @@ export interface Level {
   explanation: string;
   /** 前 4 个为正确节点（顺序与 chars 一致），其后为干扰项 */
   nodes: LevelNode[];
-  hints: number;
 }
 
 /** 连线渲染数据（像素值） */
@@ -51,7 +50,14 @@ export interface LevelState {
   slots: string[];
   /** 已选节点 id 序列（顺序即连线顺序） */
   selectedNodes: string[];
-  hintLeft: number;
   /** 保存时间戳，用于取最近一次 */
   savedAt: number;
+}
+
+/** 全局提示池：整个游戏共享 3 次提示，用完后锁定冷却 10 秒自动恢复 */
+export interface HintPool {
+  /** 剩余提示次数（0–3） */
+  left: number;
+  /** 锁定截止时间戳（ms）；<= now 表示未锁定 */
+  lockedUntil: number;
 }

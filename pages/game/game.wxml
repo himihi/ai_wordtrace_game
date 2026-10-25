@@ -12,9 +12,10 @@
       <view class="icon-btn" bindtap="onRestart">
         <text class="icon-btn-emoji">🔄</text>
       </view>
-      <view class="hint-btn {{hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
-        <text>💡 提示</text>
-        <text class="hint-count">{{hintLeft}}</text>
+      <view class="hint-btn {{hintLocked || hintLeft <= 0 ? 'hint-btn-disabled' : ''}}" bindtap="onHint">
+        <text wx:if="{{hintLocked}}">🔒 休息中</text>
+        <text wx:else>💡 提示</text>
+        <text class="hint-count">{{hintLocked ? hintLockSec : hintLeft}}</text>
       </view>
     </view>
   </view>
@@ -48,7 +49,7 @@
     >
       <view class="node-float {{selectedMap[item.id] ? 'node-float-paused' : ''}}" style="animation-delay: {{index * 0.35}}s;">
         <view class="node-core {{selectedMap[item.id] ? 'node-selected' : ''}} {{shakeNodeId === item.id ? 'node-shake' : ''}} {{hintTargetId === item.id ? 'node-hint' : ''}}">
-          <text class="node-emoji {{item.wide ? 'node-emoji-wide' : ''}}">{{item.emoji}}</text>
+          <text class="node-emoji {{item.glyphs > 2 ? 'node-emoji-xwide' : item.glyphs > 1 ? 'node-emoji-wide' : ''}}">{{item.emoji}}</text>
         </view>
       </view>
     </view>

@@ -8,6 +8,9 @@ import * as storage from '../../utils/storage';
 import { calcLine } from '../../utils/geometry';
 import { playBgm, playSfx, toggleMusic } from '../../utils/audio';
 
+/** 提示池用完后锁定时长（ms），到点自动恢复 3 次 */
+const HINT_LOCK_MS = 10000;
+
 Page({
   data: {
     level: null as Level | null,
@@ -21,7 +24,12 @@ Page({
     selectedMap: {} as Record<string, boolean>,
     /** 连线渲染数据 */
     lines: [] as Line[],
+    /** 全局提示池剩余次数（0–3） */
     hintLeft: 3,
+    /** 提示池是否处于锁定冷却中 */
+    hintLocked: false,
+    /** 锁定剩余秒数（倒计时展示） */
+    hintLockSec: 0,
     hintTargetId: '',
     showResult: false,
     shakeNodeId: '',
@@ -35,6 +43,8 @@ Page({
   /** 节点圆半径（px），连线端点缩进量；游戏区宽对应 686rpx（750 - 32×2 边距） */
   nodeRadius: 66,
   shakeTimer: null as ReturnType<typeof setTimeout> | null,
+  /** 提示锁定倒计时定时器 */
+  hintTimer: null as ReturnType<typeof setInterval> | null,
   /** 本次进入是否请求恢复未完成的对局（仅消费一次） */
   resumeRequested: false,
 
@@ -51,6 +61,14 @@ Page({
 
   onReady() {
     this.measureArea();
+  },
+
+  onUnload(): void {
+    this.clearHintTimer();
+    if (this.shakeTimer) {
+      clearTimeout(this.shakeTimer);
+      this.shakeTimer = null;
+    }
   },
 
   /** 通过 SelectorQuery 测量游戏区实际像素尺寸，供连线计算使用 */
@@ -81,12 +99,12 @@ Page({
       selectedNodes: [],
       selectedMap: {},
       lines: [],
-      hintLeft: storage.getHints(level.id),
       hintTargetId: '',
       showResult: false,
       shakeNodeId: '',
       isLastLevel: level.id >= TOTAL_LEVELS
     });
+    this.refreshHint();
 
     // 未完成对局：首页「继续游戏」进入 → 静默恢复；
     // 其他入口 → 弹窗让用户选择「继续游戏 / 重新开始」
@@ -122,13 +140,11 @@ Page({
     saved.selectedNodes.forEach((nid) => {
       selectedMap[nid] = true;
     });
-    storage.setHints(saved.levelId, saved.hintLeft);
     this.setData({
       step: saved.step,
       slots: saved.slots,
       selectedNodes: saved.selectedNodes,
-      selectedMap,
-      hintLeft: saved.hintLeft
+      selectedMap
     });
     setTimeout(() => {
       this.measureArea();
@@ -154,14 +170,13 @@ Page({
 
   /** 把当前对局进度写入存档 */
   saveState(): void {
-    const { levelId, step, slots, selectedNodes, hintLeft } = this.data;
+    const { levelId, step, slots, selectedNodes } = this.data;
     if (step <= 0 || step >= 4) return;
     storage.saveLevelState({
       levelId,
       step,
       slots: [...slots],
       selectedNodes: [...selectedNodes],
-      hintLeft,
       savedAt: Date.now()
     });
   },
@@ -208,20 +223,77 @@ Page({
     }
   },
 
+  /** 读取全局提示池并同步页面状态；锁定时启动倒计时，到期自动恢复 3 次 */
+  refreshHint(): void {
+    const pool = storage.getHintPool();
+    const now = Date.now();
+    if (pool.lockedUntil > now) {
+      this.setData({
+        hintLeft: pool.left,
+        hintLocked: true,
+        hintLockSec: Math.ceil((pool.lockedUntil - now) / 1000)
+      });
+      this.ensureHintTimer();
+    } else {
+      if (pool.left !== 3 || pool.lockedUntil !== 0) {
+        // 冷却已结束但未归位：归位并落盘
+        storage.setHintPool({ left: 3, lockedUntil: 0 });
+      }
+      this.setData({ hintLeft: 3, hintLocked: false, hintLockSec: 0 });
+      this.clearHintTimer();
+    }
+  },
+
+  /** 确保锁定倒计时定时器在跑（250ms 刷一次，到期恢复） */
+  ensureHintTimer(): void {
+    if (this.hintTimer) return;
+    this.hintTimer = setInterval(() => {
+      const pool = storage.getHintPool();
+      const remain = pool.lockedUntil - Date.now();
+      if (remain <= 0) {
+        storage.setHintPool({ left: 3, lockedUntil: 0 });
+        this.setData({ hintLeft: 3, hintLocked: false, hintLockSec: 0 });
+        this.clearHintTimer();
+      } else {
+        this.setData({ hintLockSec: Math.ceil(remain / 1000) });
+      }
+    }, 250);
+  },
+
+  clearHintTimer(): void {
+    if (this.hintTimer) {
+      clearInterval(this.hintTimer);
+      this.hintTimer = null;
+    }
+  },
+
   onHint(): void {
     const level = this.data.level as Level;
-    const { hintLeft, step } = this.data;
+    const { hintLocked, hintLeft, step } = this.data;
     if (this.data.showResult) return;
-    if (hintLeft <= 0) {
-      wx.showToast({ title: '提示已用完', icon: 'none' });
+    if (hintLocked) {
+      wx.showToast({
+        title: `提示休息中，${this.data.hintLockSec} 秒后恢复`,
+        icon: 'none'
+      });
       return;
     }
+    if (hintLeft <= 0) return;
     const target = level.nodes.find(
       (n) => n.isCorrect && n.char === level.chars[step]
     );
     if (!target) return;
-    this.setData({ hintLeft: hintLeft - 1, hintTargetId: target.id });
-    storage.setHints(level.id, hintLeft - 1);
+    const left = hintLeft - 1;
+    // 最后一次提示用完后锁定冷却，到点自动恢复 3 次
+    const pool = left <= 0
+      ? { left: 0, lockedUntil: Date.now() + HINT_LOCK_MS }
+      : { left, lockedUntil: 0 };
+    storage.setHintPool(pool);
+    this.setData({ hintLeft: left, hintTargetId: target.id });
+    if (pool.lockedUntil > 0) {
+      this.setData({ hintLocked: true, hintLockSec: Math.ceil(HINT_LOCK_MS / 1000) });
+      this.ensureHintTimer();
+    }
     this.saveState();
     setTimeout(() => this.setData({ hintTargetId: '' }), 1500);
   },
